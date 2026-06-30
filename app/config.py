@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-load_dotenv('/Users/yothinsaengsakoon/Documents/todo_render/.env.example')
+load_dotenv('/etc/secrets/.env')
 
 
 @dataclass(frozen=True)

@@ -15,6 +15,10 @@ Task creates and updates are queued and return a job ID immediately. The
 dashboard polls the job endpoint until Google Sheets confirms success or failure. Job state
 is kept in process memory for one hour, so deploys or process restarts discard unfinished jobs.
 
+Removing a ticket is also a background write. It sets the Sheets status to `removed` and
+hides the ticket from lists and metrics without deleting its row. **Fetch current** bypasses
+the browser cache and reloads the current list and summary from Google Sheets.
+
 Due times are stored with the `+07:00` Bangkok offset. The dashboard defaults new tasks to
 24 hours from the current time. On first startup, existing v2 sheets receive a new `due_at`
 column; existing date-only tasks remain valid.

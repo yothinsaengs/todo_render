@@ -72,6 +72,7 @@
     .primary { padding:11px 16px; background:linear-gradient(135deg,var(--purple),#5968ec); color:white; box-shadow:0 8px 18px rgba(91,68,220,.21); }
     .primary:hover { background:linear-gradient(135deg,var(--purple-dark),#4759dc); }
     .secondary { padding:10px 13px; border:1px solid var(--line); background:white; color:var(--ink); }
+    .danger { margin-right:auto; border-color:#f1bdc7; background:var(--red-soft); color:#a72d45; }
     .icon-button { display:grid; place-items:center; width:38px; height:38px; padding:0; background:transparent; color:var(--muted); }
     .icon-button:hover { background:var(--surface-soft); color:var(--purple); }
     .notice { position:fixed; z-index:100; left:50%; bottom:24px; max-width:min(520px,calc(100% - 30px)); padding:11px 15px;
@@ -166,6 +167,7 @@
       </div>
       <div class="top-actions">
         <div id="sync" class="sync checking" role="status"><span class="sync-dot"></span><span>Checking</span></div>
+        <button id="fetch-current" class="secondary" type="button">Fetch current</button>
         <button id="logout" class="secondary" type="button">Sign out</button>
       </div>
     </header>
@@ -206,7 +208,7 @@
       <div class="field"><label for="task-due">Due date and time</label><input id="task-due" type="datetime-local" step="60"><p class="help">Bangkok time · New tasks default to 24 hours from now.</p></div>
       <div class="field"><label for="task-tags">Tags</label><input id="task-tags" maxlength="160" placeholder="design, personal, launch"><p class="help">Separate up to 8 tags with commas.</p></div>
       <div id="drawer-meta" class="drawer-meta" hidden></div>
-      <div class="form-actions"><button id="cancel-task" class="secondary" type="button">Cancel</button><button id="save-task" class="primary" type="submit">Save task</button></div>
+      <div class="form-actions"><button id="remove-task" class="secondary danger" type="button" hidden>Remove ticket</button><button id="cancel-task" class="secondary" type="button">Cancel</button><button id="save-task" class="primary" type="submit">Save task</button></div>
     </form>
   </aside>
 
@@ -225,10 +227,10 @@
       editingId:null, pendingIds:new Set(), recentMoves:new Map(), dragged:null, keyboardDrag:null, lastFocus:null
     };
     const el = Object.fromEntries([
-      'sync','logout','metric-today','metric-overdue','metric-doing','metric-done','progress-value','progress-fill',
+      'sync','fetch-current','logout','metric-today','metric-overdue','metric-doing','metric-done','progress-value','progress-fill',
       'search','priority-filter','add-task','filter-copy','clear-filters','board','notice','live','drawer-backdrop','drawer','drawer-title',
       'close-drawer','task-form','task-title','task-details','task-status','task-priority','task-due','task-tags',
-      'drawer-meta','cancel-task','save-task'
+      'drawer-meta','remove-task','cancel-task','save-task'
     ].map(id => [id.replace(/-([a-z])/g,(_,c)=>c.toUpperCase()), document.getElementById(id)]));
 
     async function call(action, payload = {}) {
@@ -415,6 +417,7 @@
       el.drawerTitle.textContent=item?'Edit task':'Add task'; el.taskTitle.value=item?.title||''; el.taskDetails.value=item?.details||'';
       el.taskStatus.value=item?.status||'inbox'; el.taskPriority.value=item?.priority||'P3'; el.taskDue.value=item?.dueAt?bangkokDateTimeInput(new Date(item.dueAt)):item?.dueDate?`${item.dueDate}T23:59`:item?'':defaultDueAt();
       el.taskTags.value=(item?.tags||[]).join(', '); el.drawerMeta.hidden=!item;
+      el.removeTask.hidden=!item;
       if(item) el.drawerMeta.textContent=`Created ${formatTimestamp(item.createdAt)} · Updated ${formatTimestamp(item.updatedAt)} · Version ${item.version}`;
       document.body.classList.add('drawer-open'); el.drawer.setAttribute('aria-hidden','false');
       setTimeout(()=>el.taskTitle.focus(),80);
@@ -438,6 +441,25 @@
     }
 
     function replaceItem(item) { const index=state.items.findIndex(value=>value.id===item.id);if(index<0)state.items.unshift(item);else state.items[index]=item; }
+
+    async function removeTask() {
+      const item=state.items.find(value=>value.id===state.editingId);if(!item)return;
+      if(!confirm(`Remove “${item.title}” from the board?`))return;
+      el.removeTask.disabled=true;el.saveTask.disabled=true;setSync('checking','Removing');
+      try {
+        const result=await call('remove',{id:item.id,version:item.version});
+        state.items=state.items.filter(value=>value.id!==item.id);state.databaseVersion=result.databaseVersion;
+        await refreshSummary(false);writeCache();render();closeDrawer();setSync('synced','Synced');toast('Ticket removed');
+      } catch(error){toast(error.message,true);setSync('error','Error');if(error.message.includes('VERSION_CONFLICT'))await refresh();}
+      finally{el.removeTask.disabled=false;el.saveTask.disabled=false;}
+    }
+
+    async function fetchCurrent() {
+      el.fetchCurrent.disabled=true;
+      try{await refresh();toast('Fetched current data');}
+      catch(error){toast(error.message,true);setSync('error','Error');}
+      finally{el.fetchCurrent.disabled=false;}
+    }
 
     async function moveTask(taskId,targetStatus) {
       const current=state.items.find(item=>item.id===taskId);if(!current||current.status===targetStatus||state.pendingIds.has(taskId))return;
@@ -466,7 +488,8 @@
     el.search.addEventListener('input',()=>{state.query=el.search.value;renderBoard();renderFilterCopy();});
     el.priorityFilter.addEventListener('change',()=>{state.priority=el.priorityFilter.value;renderBoard();renderFilterCopy();});
     el.clearFilters.addEventListener('click',()=>{state.query='';state.priority='all';state.dashboardFilter=null;el.search.value='';el.priorityFilter.value='all';render();});
-    el.addTask.addEventListener('click',()=>openDrawer());el.closeDrawer.addEventListener('click',closeDrawer);el.cancelTask.addEventListener('click',closeDrawer);el.drawerBackdrop.addEventListener('click',closeDrawer);
+    el.addTask.addEventListener('click',()=>openDrawer());el.closeDrawer.addEventListener('click',closeDrawer);el.cancelTask.addEventListener('click',closeDrawer);el.drawerBackdrop.addEventListener('click',closeDrawer);el.removeTask.addEventListener('click',removeTask);
+    el.fetchCurrent.addEventListener('click',fetchCurrent);
     el.logout.addEventListener('click',async()=>{await fetch('/auth/logout',{method:'POST'});location.replace('/login');});
     el.taskForm.addEventListener('submit',saveTask);
     document.addEventListener('keydown',event=>{if(event.key==='Escape'&&document.body.classList.contains('drawer-open')&&!state.keyboardDrag)closeDrawer();if(event.key==='Tab'&&document.body.classList.contains('drawer-open')){const focusable=[...el.drawer.querySelectorAll('button,input,textarea,select')].filter(node=>!node.disabled&&!node.hidden&&node.offsetParent!==null);if(!focusable.length)return;const first=focusable[0],last=focusable[focusable.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}});

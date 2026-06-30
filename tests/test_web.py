@@ -78,6 +78,13 @@ class WebTests(unittest.TestCase):
             {"action": "create", "payload": {"title": "Background"}},
         )
 
+        removed = self.client.post(
+            "/api", json={"action": "remove", "payload": {"id": "task"}}
+        )
+        self.assertEqual(removed.status_code, 202)
+        removed_job = self.client.get(f"/api/jobs/{removed.json()['data']['jobId']}")
+        self.assertEqual(removed_job.json()["data"]["status"], "succeeded")
+
         failed = self.client.post(
             "/api", json={"action": "update", "payload": {"id": "task"}}
         )

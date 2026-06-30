@@ -34,7 +34,7 @@ ACTIVITY_HEADERS = [
     "changed_at",
     "snapshot_json",
 ]
-STATUSES = ["inbox", "planned", "in_progress", "blocked", "done"]
+STATUSES = ["inbox", "planned", "in_progress", "blocked", "done", "removed"]
 PRIORITIES = ["P1", "P2", "P3", "P4"]
 BANGKOK = ZoneInfo("Asia/Bangkok")
 
@@ -76,6 +76,7 @@ class GoogleStore:
             "list": self.list_tasks,
             "create": self.create_task,
             "update": self.update_task,
+            "remove": self.remove_task,
         }
         handler = handlers.get(action)
         if not handler:
@@ -153,7 +154,8 @@ class GoogleStore:
         filtered = [
             task
             for task in tasks
-            if requested_status == "all" or task["status"] == requested_status
+            if (requested_status == "all" and task["status"] != "removed")
+            or task["status"] == requested_status
         ]
         filtered.sort(key=_focus_sort_key)
         page = filtered[offset : offset + limit]
@@ -167,7 +169,7 @@ class GoogleStore:
         }
 
     def get_summary(self) -> dict[str, Any]:
-        tasks = self._read_tasks()
+        tasks = [task for task in self._read_tasks() if task["status"] != "removed"]
         today = datetime.now(BANGKOK).date()
         monday = today - timedelta(days=today.weekday())
         next_monday = monday + timedelta(days=7)
@@ -263,6 +265,29 @@ class GoogleStore:
             )
             database_version = self._bump_database_version(task["updated_at"])
             self._log_activity("update", task, database_version)
+            return {
+                "item": self._task_for_client(task),
+                "databaseVersion": database_version,
+            }
+
+    def remove_task(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            row_number, current = self._find_task(data.get("id"))
+            _assert_version(current, data.get("version"))
+            if current["status"] == "removed":
+                raise StoreError("Task is already removed.")
+            task = dict(current)
+            task.update(
+                status="removed",
+                updated_at=_now_iso(),
+                completed_at="",
+                version=int(current["version"]) + 1,
+            )
+            self._update_values(
+                "todos", row_number, [task[header] for header in TODO_HEADERS]
+            )
+            database_version = self._bump_database_version(task["updated_at"])
+            self._log_activity("remove", task, database_version)
             return {
                 "item": self._task_for_client(task),
                 "databaseVersion": database_version,

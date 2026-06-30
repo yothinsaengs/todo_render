@@ -19,7 +19,14 @@ from app.google_store import GoogleStore, StoreError
 LOGGER = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 SESSION_COOKIE = "focus_board_session"
-BACKGROUND_ACTIONS = {"create", "update", "remove"}
+BACKGROUND_ACTIONS = {
+    "create",
+    "update",
+    "remove",
+    "merge",
+    "undoMerge",
+    "bulkUpdateStatus",
+}
 
 
 class LoginBody(BaseModel):

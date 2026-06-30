@@ -95,10 +95,14 @@
     .column-empty { padding:28px 10px; border:1px dashed #d9d5e8; border-radius:13px; color:#9996aa; font-size:12px; text-align:center; }
     .task-card { position:relative; border:1px solid var(--line); border-radius:15px; background:white; box-shadow:0 5px 14px rgba(52,47,90,.06); overflow:hidden; transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease; }
     .task-card:hover { transform:translateY(-1px); border-color:#d6cff8; box-shadow:0 9px 20px rgba(52,47,90,.1); }
+    .task-card.selected { border-color:var(--purple); box-shadow:0 0 0 2px rgba(109,74,255,.16),0 9px 20px rgba(52,47,90,.1); }
+    .task-card.merge-target { border-color:var(--green); box-shadow:0 0 0 3px rgba(37,133,98,.2),0 12px 28px rgba(37,133,98,.16); transform:translateY(-2px); }
     .task-card.overdue-card { border-color:#f3bac5; box-shadow:inset 3px 0 var(--red),0 5px 14px rgba(52,47,90,.06); }
     .task-card.pending { opacity:.62; pointer-events:none; }
     .card-body { padding:11px 12px 12px; }
     .card-top { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px; }
+    .card-select { display:inline-flex; align-items:center; gap:7px; }
+    .card-checkbox { width:17px; height:17px; margin:0; padding:0; accent-color:var(--purple); cursor:pointer; }
     .priority { display:inline-flex; align-items:center; padding:3px 7px; border-radius:7px; font-size:10px; font-weight:850; letter-spacing:.04em; }
     .priority.P1 { background:var(--red-soft); color:#b5314b; }
     .priority.P2 { background:var(--amber-soft); color:#a36000; }
@@ -118,6 +122,7 @@
     .due.overdue { background:var(--red-soft); color:#b5314b; font-weight:800; }
     .quick-status { width:auto; max-width:104px; min-height:32px; padding:5px 24px 5px 8px; border-color:#ded9f1; border-radius:9px; background-color:#f8f7ff; color:#5e547e; font-size:10px; font-weight:750; cursor:pointer; }
     .ghost-card { position:fixed; z-index:120; width:250px; pointer-events:none; opacity:.88; transform:rotate(2deg) scale(1.02); box-shadow:0 22px 48px rgba(45,32,105,.25); }
+    .drag-count { position:absolute; z-index:3; top:-10px; right:-10px; min-width:28px; padding:4px 8px; border-radius:99px; background:var(--purple); color:white; font-size:11px; font-weight:850; text-align:center; }
     body.dragging { cursor:grabbing; user-select:none; }
     .drawer-backdrop { position:fixed; z-index:70; inset:0; border:0; background:rgba(27,25,48,.28); opacity:0; pointer-events:none; transition:opacity .2s ease; backdrop-filter:blur(2px); }
     .drawer { position:fixed; z-index:80; top:0; right:0; width:min(440px,100%); height:100dvh; padding:0; background:white; box-shadow:-20px 0 60px rgba(35,28,78,.18); transform:translateX(105%); transition:transform .24s ease; overflow-y:auto; overscroll-behavior:contain; }
@@ -133,6 +138,21 @@
     .help { margin:4px 0 0; color:var(--muted); font-size:11px; }
     .drawer-meta { margin:16px 0; padding:11px 12px; border-radius:11px; background:#f7f6fb; color:var(--muted); font-size:11px; }
     .form-actions { display:flex; justify-content:flex-end; gap:9px; padding-top:5px; }
+    .selection-bar { display:flex; align-items:center; gap:10px; margin:-3px 0 14px; padding:10px 12px; border:1px solid #d9d2ff; border-radius:12px; background:var(--purple-soft); color:var(--purple-dark); }
+    .selection-bar span { margin-right:auto; font-weight:750; }
+    dialog { width:min(520px,calc(100% - 28px)); padding:0; border:0; border-radius:18px; color:var(--ink); box-shadow:0 28px 80px rgba(28,25,52,.3); }
+    dialog::backdrop { background:rgba(27,25,48,.38); backdrop-filter:blur(2px); }
+    .merge-dialog-body { padding:22px; }
+    .merge-dialog-body h2 { margin:0 0 6px; font-size:21px; }
+    .merge-dialog-body > p { margin:0 0 16px; color:var(--muted); }
+    .merge-summary { display:grid; gap:8px; margin:0 0 16px; padding:12px; border-radius:12px; background:#f7f6fb; }
+    .merge-summary div { display:flex; justify-content:space-between; gap:14px; }
+    .merge-summary span { color:var(--muted); }
+    .merge-source-list { max-height:180px; margin:0; padding-left:22px; overflow:auto; color:#55536c; }
+    .merge-dialog-actions { display:flex; justify-content:flex-end; gap:9px; padding:14px 22px; border-top:1px solid var(--line); background:#faf9fd; }
+    .notice { display:flex; align-items:center; gap:12px; }
+    .notice span { flex:1; }
+    .notice button { border:1px solid rgba(255,255,255,.4); border-radius:8px; background:transparent; color:white; padding:5px 9px; font-weight:800; }
     .live { position:fixed; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
     @media (max-width:1100px) {
       .dashboard { grid-template-columns:repeat(4,1fr); }
@@ -192,18 +212,23 @@
       <select id="priority-filter" class="priority-filter" aria-label="Filter by priority"><option value="all">All priorities</option><option value="P1">P1 · Urgent</option><option value="P2">P2 · High</option><option value="P3">P3 · Normal</option><option value="P4">P4 · Low</option></select>
       <button id="add-task" class="primary add-task" type="button">+ Add task</button>
     </section>
+    <div id="selection-bar" class="selection-bar" hidden>
+      <span><strong id="selection-count">0</strong> selected</span>
+      <button id="merge-selected" class="secondary" type="button">Merge selected</button>
+      <button id="clear-selection" class="secondary" type="button">Clear</button>
+    </div>
     <div class="filter-note"><span id="filter-copy">Showing all tasks</span><button id="clear-filters" type="button" hidden>Clear filters</button></div>
     <section id="board" class="board" aria-label="Kanban board"></section>
   </main>
 
-  <div id="notice" class="notice" role="status"></div>
+  <div id="notice" class="notice" role="status"><span id="notice-text"></span><button id="notice-action" type="button" hidden></button></div>
   <div id="live" class="live" aria-live="assertive"></div>
   <button id="drawer-backdrop" class="drawer-backdrop" type="button" aria-label="Close task editor"></button>
   <aside id="drawer" class="drawer" aria-labelledby="drawer-title" aria-hidden="true">
     <div class="drawer-head"><h2 id="drawer-title">Add task</h2><button id="close-drawer" class="icon-button" type="button" aria-label="Close task editor">✕</button></div>
     <form id="task-form" class="task-form">
       <div class="field"><label for="task-title">Title</label><input id="task-title" maxlength="200" required placeholder="What needs doing?"></div>
-      <div class="field"><label for="task-details">Details</label><textarea id="task-details" maxlength="2000" placeholder="Context, next step, or useful notes…"></textarea></div>
+      <div class="field"><label for="task-details">Details</label><textarea id="task-details" maxlength="20000" placeholder="Context, next step, or useful notes…"></textarea></div>
       <div class="field-grid">
         <div class="field"><label for="task-status">Status</label><select id="task-status"><option value="inbox">Inbox</option><option value="planned">Planned</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="done">Done</option></select></div>
         <div class="field"><label for="task-priority">Priority</label><select id="task-priority"><option value="P1">P1 · Urgent</option><option value="P2">P2 · High</option><option value="P3" selected>P3 · Normal</option><option value="P4">P4 · Low</option></select></div>
@@ -214,6 +239,16 @@
       <div class="form-actions"><button id="remove-task" class="secondary danger" type="button" hidden>Remove ticket</button><button id="cancel-task" class="secondary" type="button">Cancel</button><button id="save-task" class="primary" type="submit">Save task</button></div>
     </form>
   </aside>
+
+  <dialog id="merge-dialog" aria-labelledby="merge-dialog-title">
+    <div class="merge-dialog-body">
+      <h2 id="merge-dialog-title">Merge tickets?</h2>
+      <p id="merge-dialog-copy"></p>
+      <div id="merge-summary" class="merge-summary"></div>
+      <ol id="merge-source-list" class="merge-source-list"></ol>
+    </div>
+    <div class="merge-dialog-actions"><button id="cancel-merge" class="secondary" type="button">Cancel</button><button id="confirm-merge" class="primary" type="button">Merge tickets</button></div>
+  </dialog>
 
   <script>
     const CACHE_KEY = 'kanban-todo-cache-v2';
@@ -227,13 +262,13 @@
     const PRIORITIES = ['P1','P2','P3','P4'];
     const state = {
       items: [], summary: null, databaseVersion: null, query:'', priority:'all', dashboardFilter:null,
-      editingId:null, pendingIds:new Set(), recentMoves:new Map(), dragged:null, keyboardDrag:null, lastFocus:null
+      editingId:null, pendingIds:new Set(), selectedIds:new Set(), recentMoves:new Map(), dragged:null, keyboardDrag:null, mergeTargetMode:false, lastFocus:null
     };
     const el = Object.fromEntries([
       'sync','fetch-current','logout','metric-today','metric-overdue','metric-doing','metric-done','progress-value','progress-fill',
-      'search','priority-filter','add-task','filter-copy','clear-filters','board','notice','live','drawer-backdrop','drawer','drawer-title',
+      'search','priority-filter','add-task','selection-bar','selection-count','merge-selected','clear-selection','filter-copy','clear-filters','board','notice','notice-text','notice-action','live','drawer-backdrop','drawer','drawer-title',
       'close-drawer','task-form','task-title','task-details','task-status','task-priority','task-due','task-tags',
-      'drawer-meta','remove-task','cancel-task','save-task'
+      'drawer-meta','remove-task','cancel-task','save-task','merge-dialog','merge-dialog-copy','merge-summary','merge-source-list','cancel-merge','confirm-merge'
     ].map(id => [id.replace(/-([a-z])/g,(_,c)=>c.toUpperCase()), document.getElementById(id)]));
 
     async function call(action, payload = {}) {
@@ -345,13 +380,27 @@
 
     let toastTimer;
     function toast(message,isError=false) {
-      clearTimeout(toastTimer); el.notice.textContent=message; el.notice.className=`notice show${isError?' error':''}`;
-      toastTimer=setTimeout(()=>el.notice.className='notice',3400);
+      clearTimeout(toastTimer);el.noticeText.textContent=message;el.noticeAction.hidden=true;el.noticeAction.onclick=null;el.notice.className=`notice show${isError?' error':''}`;
+      toastTimer=setTimeout(hideToast,3400);
     }
+
+    function toastWithAction(message,label,action,duration=15000) {
+      clearTimeout(toastTimer);el.noticeText.textContent=message;el.noticeAction.textContent=label;el.noticeAction.hidden=false;el.noticeAction.onclick=async()=>{hideToast();await action();};el.notice.className='notice show';
+      toastTimer=setTimeout(hideToast,duration);
+    }
+
+    function hideToast(){clearTimeout(toastTimer);el.notice.className='notice';el.noticeAction.hidden=true;el.noticeAction.onclick=null;}
 
     function announce(message) { el.live.textContent=''; requestAnimationFrame(()=>{el.live.textContent=message;}); }
 
-    function render() { renderDashboard(); renderBoard(); renderFilterCopy(); }
+    function render() { renderDashboard(); renderBoard(); renderFilterCopy(); renderSelection(); }
+
+    function renderSelection() {
+      for(const id of [...state.selectedIds])if(!state.items.some(item=>item.id===id))state.selectedIds.delete(id);
+      el.selectionCount.textContent=state.selectedIds.size;el.selectionBar.hidden=!state.selectedIds.size;
+      el.mergeSelected.disabled=state.selectedIds.size<1||state.selectedIds.size>20;
+      el.mergeSelected.textContent=state.mergeTargetMode?'Choose target ticket':`Merge selected (${state.selectedIds.size})`;
+    }
 
     function renderDashboard() {
       const summary = state.summary || {dueToday:0,overdue:0,inProgress:0,doneThisWeek:0,completionPercent:0};
@@ -394,11 +443,11 @@
     }
 
     function taskCard(item) {
-      const card=document.createElement('article'); card.className=`task-card${isOverdue(item)?' overdue-card':''}${state.pendingIds.has(item.id)?' pending':''}`; card.dataset.taskId=item.id;
+      const card=document.createElement('article'); card.className=`task-card${isOverdue(item)?' overdue-card':''}${state.pendingIds.has(item.id)?' pending':''}${state.selectedIds.has(item.id)?' selected':''}`; card.dataset.taskId=item.id;
       const body=document.createElement('div'); body.className='card-body';
       const tags=(item.tags||[]).slice(0,3).map(tag=>`<span class="tag">${escapeHtml(tag)}</span>`).join('');
       const statusOptions=STATUSES.map(status=>`<option value="${status.id}"${status.id===item.status?' selected':''}>${status.label}</option>`).join('');
-      body.innerHTML=`<div class="card-top"><span class="priority ${item.priority}">${item.priority}</span><button class="drag-handle" type="button" aria-label="Move ${escapeHtml(item.title)}" data-drag-id="${item.id}">⋮⋮</button></div><button class="card-main" type="button" data-open-id="${item.id}"><h3 class="task-title">${escapeHtml(item.title)}</h3>${item.details?`<p class="task-details">${escapeHtml(item.details)}</p>`:''}</button>${tags?`<div class="tag-row">${tags}</div>`:''}<div class="card-footer">${dueMarkup(item)}<select class="quick-status" data-status-id="${item.id}" aria-label="Change status for ${escapeHtml(item.title)}">${statusOptions}</select></div>`;
+      body.innerHTML=`<div class="card-top"><span class="card-select"><input class="card-checkbox" type="checkbox" data-select-id="${item.id}" aria-label="Select ${escapeHtml(item.title)}"${state.selectedIds.has(item.id)?' checked':''}><span class="priority ${item.priority}">${item.priority}</span></span><button class="drag-handle" type="button" aria-label="Move ${escapeHtml(item.title)}" data-drag-id="${item.id}">⋮⋮</button></div><button class="card-main" type="button" data-open-id="${item.id}"><h3 class="task-title">${escapeHtml(item.title)}</h3>${item.details?`<p class="task-details">${escapeHtml(item.details)}</p>`:''}</button>${tags?`<div class="tag-row">${tags}</div>`:''}<div class="card-footer">${dueMarkup(item)}<select class="quick-status" data-status-id="${item.id}" aria-label="Change status for ${escapeHtml(item.title)}">${statusOptions}</select></div>`;
       card.appendChild(body); return card;
     }
 
@@ -464,38 +513,104 @@
       finally{el.fetchCurrent.disabled=false;}
     }
 
-    async function moveTask(taskId,targetStatus) {
-      const current=state.items.find(item=>item.id===taskId);if(!current||current.status===targetStatus||state.pendingIds.has(taskId))return;
-      const snapshot=structuredClone(current);state.pendingIds.add(taskId);state.recentMoves.set(taskId,Date.now());current.status=targetStatus;current.updatedAt=new Date().toISOString();current.completedAt=targetStatus==='done'?(current.completedAt||current.updatedAt):null;render();announce(`Moved ${current.title} to ${statusLabel(targetStatus)}. Saving.`);
-      try{const result=await call('update',{id:taskId,version:snapshot.version,status:targetStatus});replaceItem(result.item);state.databaseVersion=result.databaseVersion;await refreshSummary(false);writeCache();state.pendingIds.delete(taskId);render();setSync('synced','Synced');announce(`${result.item.title} moved to ${statusLabel(targetStatus)}.`);}
-      catch(error){replaceItem(snapshot);state.pendingIds.delete(taskId);state.recentMoves.delete(taskId);render();toast(`Move failed: ${error.message}`,true);announce(`Move failed. ${snapshot.title} returned to ${statusLabel(snapshot.status)}.`);if(error.message.includes('VERSION_CONFLICT'))await refresh();}
+    function clearSelection() { state.selectedIds.clear();state.mergeTargetMode=false;render(); }
+
+    function toggleSelection(taskId,checked) {
+      if(checked&&state.selectedIds.size>=20&&!state.selectedIds.has(taskId)){toast('Select up to 20 tickets.',true);renderBoard();return;}
+      if(checked)state.selectedIds.add(taskId);else state.selectedIds.delete(taskId);
+      if(!state.selectedIds.size)state.mergeTargetMode=false;
+      render();
+    }
+
+    function dragTaskIds(taskId) { return state.selectedIds.has(taskId)?[...state.selectedIds]:[taskId]; }
+
+    async function moveTask(taskId,targetStatus) { return moveTasks([taskId],targetStatus); }
+
+    async function moveTasks(taskIds,targetStatus) {
+      const ids=[...new Set(taskIds)].filter(id=>state.items.some(item=>item.id===id)).slice(0,20);
+      const current=ids.map(id=>state.items.find(item=>item.id===id)).filter(item=>item.status!==targetStatus&&!state.pendingIds.has(item.id));
+      if(!current.length)return;
+      const snapshots=new Map(current.map(item=>[item.id,structuredClone(item)]));const now=new Date().toISOString();
+      current.forEach(item=>{state.pendingIds.add(item.id);state.recentMoves.set(item.id,Date.now());item.status=targetStatus;item.updatedAt=now;item.completedAt=targetStatus==='done'?(item.completedAt||now):null;});
+      render();announce(`Moving ${current.length} ticket${current.length===1?'':'s'} to ${statusLabel(targetStatus)}. Saving.`);
+      try{
+        const result=current.length===1
+          ?await call('update',{id:current[0].id,version:snapshots.get(current[0].id).version,status:targetStatus})
+          :await call('bulkUpdateStatus',{tasks:current.map(item=>({id:item.id,version:snapshots.get(item.id).version})),status:targetStatus});
+        const items=result.items||[result.item];items.forEach(replaceItem);state.databaseVersion=result.databaseVersion;
+        current.forEach(item=>state.pendingIds.delete(item.id));if(current.length>1){state.selectedIds.clear();state.mergeTargetMode=false;}
+        await refreshSummary(false);writeCache();render();setSync('synced','Synced');announce(`${current.length} ticket${current.length===1?'':'s'} moved to ${statusLabel(targetStatus)}.`);
+      } catch(error){
+        snapshots.forEach((snapshot,id)=>{replaceItem(snapshot);state.pendingIds.delete(id);state.recentMoves.delete(id);});render();toast(`Move failed: ${error.message}`,true);announce('Move failed. Tickets returned to their previous columns.');if(error.message.includes('VERSION_CONFLICT'))await refresh();
+      }
+    }
+
+    function startMergeTargetMode() {
+      if(!state.selectedIds.size)return;
+      state.mergeTargetMode=true;render();announce('Choose the ticket that should receive the selected tickets.');
+    }
+
+    async function requestMerge(sourceIds,targetId) {
+      const target=state.items.find(item=>item.id===targetId);const ids=[...new Set(sourceIds)].filter(id=>id!==targetId).slice(0,20);
+      const sources=ids.map(id=>state.items.find(item=>item.id===id)).filter(Boolean);
+      if(!target||!sources.length){toast('Choose a different target ticket.',true);return;}
+      if([target,...sources].some(item=>state.pendingIds.has(item.id))){toast('Wait for the current save to finish.',true);return;}
+      if(!await showMergeConfirmation(target,sources)){state.mergeTargetMode=false;render();return;}
+      [target,...sources].forEach(item=>state.pendingIds.add(item.id));state.mergeTargetMode=false;render();setSync('checking','Merging');
+      try{
+        const result=await call('merge',{targetId:target.id,targetVersion:target.version,sources:sources.map(item=>({id:item.id,version:item.version}))});
+        replaceItem(result.item);state.items=state.items.filter(item=>!result.removedIds.includes(item.id));state.databaseVersion=result.databaseVersion;
+        [target,...sources].forEach(item=>state.pendingIds.delete(item.id));state.selectedIds.clear();
+        await refreshSummary(false);writeCache();render();setSync('synced','Synced');announce(`${sources.length} ticket${sources.length===1?'':'s'} merged into ${target.title}.`);
+        toastWithAction('Tickets merged.','Undo',()=>undoMerge(result.mergeId),15000);
+      } catch(error){[target,...sources].forEach(item=>state.pendingIds.delete(item.id));render();toast(`Merge failed: ${error.message}`,true);setSync('error','Error');if(error.message.includes('VERSION_CONFLICT'))await refresh();}
+    }
+
+    async function undoMerge(mergeId) {
+      setSync('checking','Undoing');
+      try{const result=await call('undoMerge',{mergeId});(result.items||[]).forEach(replaceItem);state.databaseVersion=result.databaseVersion;await refreshSummary(false);writeCache();render();setSync('synced','Synced');toast('Merge undone.');}
+      catch(error){toast(`Undo failed: ${error.message}`,true);setSync('error','Error');if(error.message.includes('VERSION_CONFLICT'))await refresh();}
+    }
+
+    function showMergeConfirmation(target,sources) {
+      const all=[target,...sources];const priority=all.reduce((best,item)=>PRIORITIES.indexOf(item.priority)<PRIORITIES.indexOf(best)?item.priority:best,target.priority);
+      const due=all.map(item=>item.dueAt||item.dueDate).filter(Boolean).sort()[0]||'No due date';
+      const tags=[...new Set(all.flatMap(item=>item.tags||[]))].slice(0,8);
+      el.mergeDialogCopy.textContent=`Keep “${target.title}” and absorb ${sources.length} selected ticket${sources.length===1?'':'s'}. Source tickets will be removed from the board.`;
+      el.mergeSummary.replaceChildren();[['Target status',statusLabel(target.status)],['Priority',priority],['Earliest due',due==='No due date'?due:(due.includes('T')?formatDateTime(due):formatDate(due))],['Tags',tags.join(', ')||'None']].forEach(([label,value])=>{const row=document.createElement('div');const name=document.createElement('strong');name.textContent=label;const copy=document.createElement('span');copy.textContent=value;row.append(name,copy);el.mergeSummary.appendChild(row);});
+      el.mergeSourceList.replaceChildren();sources.slice(0,10).forEach(item=>{const li=document.createElement('li');li.textContent=item.title;el.mergeSourceList.appendChild(li);});if(sources.length>10){const li=document.createElement('li');li.textContent=`+ ${sources.length-10} more`;el.mergeSourceList.appendChild(li);}
+      return new Promise(resolve=>{
+        let settled=false;const finish=value=>{if(settled)return;settled=true;el.mergeDialog.removeEventListener('close',cancel);if(el.mergeDialog.open)el.mergeDialog.close();resolve(value);};const cancel=()=>finish(false);
+        el.cancelMerge.onclick=()=>finish(false);el.confirmMerge.onclick=()=>finish(true);el.mergeDialog.addEventListener('close',cancel,{once:true});el.mergeDialog.showModal();
+      });
     }
 
     function statusLabel(id){return STATUSES.find(value=>value.id===id)?.label||id;}
 
-    const pointerDrag={timer:null,active:false,startX:0,startY:0,x:0,y:0,taskId:null,originStatus:null,targetStatus:null,ghost:null,handle:null};
-    function pointerDown(event,handle){if(event.button!==undefined&&event.button!==0)return;const item=state.items.find(value=>value.id===handle.dataset.dragId);if(!item)return;pointerDrag.startX=pointerDrag.x=event.clientX;pointerDrag.startY=pointerDrag.y=event.clientY;pointerDrag.taskId=item.id;pointerDrag.originStatus=item.status;pointerDrag.handle=handle;handle.setPointerCapture?.(event.pointerId);const delay=event.pointerType==='touch'?180:0;if(delay)pointerDrag.timer=setTimeout(()=>startPointerDrag(pointerDrag.startX,pointerDrag.startY),delay);else startPointerDrag(pointerDrag.startX,pointerDrag.startY);}
-    function startPointerDrag(x,y){const card=document.querySelector(`[data-task-id="${pointerDrag.taskId}"]`);if(!card)return;pointerDrag.active=true;document.body.classList.add('dragging');pointerDrag.ghost=card.cloneNode(true);pointerDrag.ghost.classList.add('ghost-card');pointerDrag.ghost.style.left=`${x+12}px`;pointerDrag.ghost.style.top=`${y+12}px`;document.body.appendChild(pointerDrag.ghost);announce(`Picked up ${state.items.find(item=>item.id===pointerDrag.taskId).title}.`);}
-    function pointerMove(event){if(!pointerDrag.taskId)return;pointerDrag.x=event.clientX;pointerDrag.y=event.clientY;if(!pointerDrag.active){if(Math.hypot(event.clientX-pointerDrag.startX,event.clientY-pointerDrag.startY)>9){clearTimeout(pointerDrag.timer);resetPointerDrag();}return;}event.preventDefault();pointerDrag.ghost.style.left=`${event.clientX+12}px`;pointerDrag.ghost.style.top=`${event.clientY+12}px`;pointerDrag.ghost.hidden=true;const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.column');pointerDrag.ghost.hidden=false;document.querySelectorAll('.column.drop-target').forEach(column=>column.classList.remove('drop-target'));pointerDrag.targetStatus=target?.dataset.status||null;if(target)target.classList.add('drop-target');const rect=el.board.getBoundingClientRect();if(event.clientX<rect.left+45)el.board.scrollLeft-=12;if(event.clientX>rect.right-45)el.board.scrollLeft+=12;if(event.clientY<55)window.scrollBy(0,-12);if(event.clientY>window.innerHeight-55)window.scrollBy(0,12);}
-    function pointerUp(){clearTimeout(pointerDrag.timer);if(pointerDrag.active&&pointerDrag.targetStatus)moveTask(pointerDrag.taskId,pointerDrag.targetStatus);resetPointerDrag();}
-    function resetPointerDrag(){pointerDrag.ghost?.remove();document.body.classList.remove('dragging');document.querySelectorAll('.column.drop-target').forEach(column=>column.classList.remove('drop-target'));Object.assign(pointerDrag,{timer:null,active:false,taskId:null,originStatus:null,targetStatus:null,ghost:null,handle:null});}
+    const pointerDrag={timer:null,active:false,startX:0,startY:0,x:0,y:0,taskId:null,sourceIds:[],originStatus:null,targetStatus:null,targetTaskId:null,ghost:null,handle:null};
+    function pointerDown(event,handle){if(event.button!==undefined&&event.button!==0)return;const item=state.items.find(value=>value.id===handle.dataset.dragId);if(!item)return;pointerDrag.startX=pointerDrag.x=event.clientX;pointerDrag.startY=pointerDrag.y=event.clientY;pointerDrag.taskId=item.id;pointerDrag.sourceIds=dragTaskIds(item.id);pointerDrag.originStatus=item.status;pointerDrag.handle=handle;handle.setPointerCapture?.(event.pointerId);const delay=event.pointerType==='touch'?180:0;if(delay)pointerDrag.timer=setTimeout(()=>startPointerDrag(pointerDrag.startX,pointerDrag.startY),delay);else startPointerDrag(pointerDrag.startX,pointerDrag.startY);}
+    function startPointerDrag(x,y){const card=document.querySelector(`[data-task-id="${pointerDrag.taskId}"]`);if(!card)return;pointerDrag.active=true;document.body.classList.add('dragging');pointerDrag.ghost=card.cloneNode(true);pointerDrag.ghost.classList.add('ghost-card');if(pointerDrag.sourceIds.length>1){const badge=document.createElement('span');badge.className='drag-count';badge.textContent=pointerDrag.sourceIds.length;pointerDrag.ghost.appendChild(badge);}pointerDrag.ghost.style.left=`${x+12}px`;pointerDrag.ghost.style.top=`${y+12}px`;document.body.appendChild(pointerDrag.ghost);announce(`Picked up ${pointerDrag.sourceIds.length} ticket${pointerDrag.sourceIds.length===1?'':'s'}.`);}
+    function pointerMove(event){if(!pointerDrag.taskId)return;pointerDrag.x=event.clientX;pointerDrag.y=event.clientY;if(!pointerDrag.active){if(Math.hypot(event.clientX-pointerDrag.startX,event.clientY-pointerDrag.startY)>9){clearTimeout(pointerDrag.timer);resetPointerDrag();}return;}event.preventDefault();pointerDrag.ghost.style.left=`${event.clientX+12}px`;pointerDrag.ghost.style.top=`${event.clientY+12}px`;pointerDrag.ghost.hidden=true;const hit=document.elementFromPoint(event.clientX,event.clientY);const taskTarget=hit?.closest('.task-card');const columnTarget=hit?.closest('.column');pointerDrag.ghost.hidden=false;document.querySelectorAll('.column.drop-target').forEach(column=>column.classList.remove('drop-target'));document.querySelectorAll('.task-card.merge-target').forEach(card=>card.classList.remove('merge-target'));pointerDrag.targetTaskId=taskTarget?.dataset.taskId!==pointerDrag.taskId?taskTarget?.dataset.taskId||null:null;pointerDrag.targetStatus=pointerDrag.targetTaskId?null:columnTarget?.dataset.status||null;if(pointerDrag.targetTaskId)taskTarget.classList.add('merge-target');else if(columnTarget)columnTarget.classList.add('drop-target');const rect=el.board.getBoundingClientRect();if(event.clientX<rect.left+45)el.board.scrollLeft-=12;if(event.clientX>rect.right-45)el.board.scrollLeft+=12;if(event.clientY<55)window.scrollBy(0,-12);if(event.clientY>window.innerHeight-55)window.scrollBy(0,12);}
+    function pointerUp(){clearTimeout(pointerDrag.timer);const sourceIds=[...pointerDrag.sourceIds],targetTaskId=pointerDrag.targetTaskId,targetStatus=pointerDrag.targetStatus,active=pointerDrag.active;resetPointerDrag();if(active&&targetTaskId)requestMerge(sourceIds,targetTaskId);else if(active&&targetStatus)moveTasks(sourceIds,targetStatus);}
+    function resetPointerDrag(){pointerDrag.ghost?.remove();document.body.classList.remove('dragging');document.querySelectorAll('.column.drop-target').forEach(column=>column.classList.remove('drop-target'));document.querySelectorAll('.task-card.merge-target').forEach(card=>card.classList.remove('merge-target'));Object.assign(pointerDrag,{timer:null,active:false,taskId:null,sourceIds:[],originStatus:null,targetStatus:null,targetTaskId:null,ghost:null,handle:null});}
 
-    function keyboardDrag(event,handle){const task=state.items.find(item=>item.id===handle.dataset.dragId);if(!task)return;if(!state.keyboardDrag&&event.key===' '){event.preventDefault();state.keyboardDrag={taskId:task.id,index:STATUSES.findIndex(value=>value.id===task.status)};handle.setAttribute('aria-pressed','true');announce(`Picked up ${task.title}. Use left and right arrows, then Enter to drop.`);return;}if(!state.keyboardDrag||state.keyboardDrag.taskId!==task.id)return;if(['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();state.keyboardDrag.index=Math.max(0,Math.min(STATUSES.length-1,state.keyboardDrag.index+(event.key==='ArrowRight'?1:-1)));announce(`Target ${STATUSES[state.keyboardDrag.index].label}.`);}else if(event.key==='Enter'){event.preventDefault();const target=STATUSES[state.keyboardDrag.index].id;state.keyboardDrag=null;handle.removeAttribute('aria-pressed');moveTask(task.id,target);}else if(event.key==='Escape'){event.preventDefault();state.keyboardDrag=null;handle.removeAttribute('aria-pressed');announce('Move cancelled.');}}
+    function keyboardDrag(event,handle){const task=state.items.find(item=>item.id===handle.dataset.dragId);if(!task)return;if(!state.keyboardDrag&&event.key===' '){event.preventDefault();state.keyboardDrag={taskId:task.id,taskIds:dragTaskIds(task.id),index:STATUSES.findIndex(value=>value.id===task.status)};handle.setAttribute('aria-pressed','true');announce(`Picked up ${state.keyboardDrag.taskIds.length} ticket${state.keyboardDrag.taskIds.length===1?'':'s'}. Use left and right arrows, then Enter to drop.`);return;}if(!state.keyboardDrag||state.keyboardDrag.taskId!==task.id)return;if(['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();state.keyboardDrag.index=Math.max(0,Math.min(STATUSES.length-1,state.keyboardDrag.index+(event.key==='ArrowRight'?1:-1)));announce(`Target ${STATUSES[state.keyboardDrag.index].label}.`);}else if(event.key==='Enter'){event.preventDefault();const target=STATUSES[state.keyboardDrag.index].id,ids=state.keyboardDrag.taskIds;state.keyboardDrag=null;handle.removeAttribute('aria-pressed');moveTasks(ids,target);}else if(event.key==='Escape'){event.preventDefault();state.keyboardDrag=null;handle.removeAttribute('aria-pressed');announce('Move cancelled.');}}
 
     document.addEventListener('pointermove',pointerMove,{passive:false});document.addEventListener('pointerup',pointerUp);document.addEventListener('pointercancel',pointerUp);
     el.board.addEventListener('pointerdown',event=>{const handle=event.target.closest('[data-drag-id]');if(handle)pointerDown(event,handle);});
     el.board.addEventListener('keydown',event=>{const handle=event.target.closest('[data-drag-id]');if(handle)keyboardDrag(event,handle);});
-    el.board.addEventListener('click',event=>{const button=event.target.closest('[data-open-id]');if(button)openDrawer(button.dataset.openId);});
-    el.board.addEventListener('change',event=>{const select=event.target.closest('[data-status-id]');if(select)moveTask(select.dataset.statusId,select.value);});
+    el.board.addEventListener('click',event=>{if(state.mergeTargetMode){if(event.target.closest('input,select,[data-drag-id]'))return;const card=event.target.closest('[data-task-id]');if(card){event.preventDefault();requestMerge([...state.selectedIds],card.dataset.taskId);}return;}const button=event.target.closest('[data-open-id]');if(button)openDrawer(button.dataset.openId);});
+    el.board.addEventListener('change',event=>{const checkbox=event.target.closest('[data-select-id]');if(checkbox){toggleSelection(checkbox.dataset.selectId,checkbox.checked);return;}const select=event.target.closest('[data-status-id]');if(select)moveTask(select.dataset.statusId,select.value);});
     document.querySelector('.dashboard').addEventListener('click',event=>{const button=event.target.closest('[data-dashboard]');if(!button)return;state.dashboardFilter=state.dashboardFilter===button.dataset.dashboard?null:button.dataset.dashboard;render();});
     el.search.addEventListener('input',()=>{state.query=el.search.value;renderBoard();renderFilterCopy();});
     el.priorityFilter.addEventListener('change',()=>{state.priority=el.priorityFilter.value;renderBoard();renderFilterCopy();});
     el.clearFilters.addEventListener('click',()=>{state.query='';state.priority='all';state.dashboardFilter=null;el.search.value='';el.priorityFilter.value='all';render();});
     el.addTask.addEventListener('click',()=>openDrawer());el.closeDrawer.addEventListener('click',closeDrawer);el.cancelTask.addEventListener('click',closeDrawer);el.drawerBackdrop.addEventListener('click',closeDrawer);el.removeTask.addEventListener('click',removeTask);
     el.fetchCurrent.addEventListener('click',fetchCurrent);
+    el.clearSelection.addEventListener('click',clearSelection);el.mergeSelected.addEventListener('click',startMergeTargetMode);
     el.logout.addEventListener('click',async()=>{await fetch('/auth/logout',{method:'POST'});location.replace('/login');});
     el.taskForm.addEventListener('submit',saveTask);
-    document.addEventListener('keydown',event=>{if(event.key==='Escape'&&document.body.classList.contains('drawer-open')&&!state.keyboardDrag)closeDrawer();if(event.key==='Tab'&&document.body.classList.contains('drawer-open')){const focusable=[...el.drawer.querySelectorAll('button,input,textarea,select')].filter(node=>!node.disabled&&!node.hidden&&node.offsetParent!==null);if(!focusable.length)return;const first=focusable[0],last=focusable[focusable.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}});
+    document.addEventListener('keydown',event=>{if(event.key==='Escape'&&state.mergeTargetMode){state.mergeTargetMode=false;render();announce('Merge cancelled.');return;}if(event.key==='Escape'&&document.body.classList.contains('drawer-open')&&!state.keyboardDrag)closeDrawer();if(event.key==='Tab'&&document.body.classList.contains('drawer-open')){const focusable=[...el.drawer.querySelectorAll('button,input,textarea,select')].filter(node=>!node.disabled&&!node.hidden&&node.offsetParent!==null);if(!focusable.length)return;const first=focusable[0],last=focusable[focusable.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}});
     boot();
   </script>
 </body>

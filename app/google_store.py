@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 
 
-TODO_HEADERS = [
+TODO_HEADERS_V2 = [
     "id",
     "title",
     "details",
@@ -21,9 +21,14 @@ TODO_HEADERS = [
     "updated_at",
     "completed_at",
     "version",
-    "due_at",
 ]
-LEGACY_TODO_HEADERS = TODO_HEADERS[:-1]
+TODO_HEADERS_V3 = TODO_HEADERS_V2 + ["due_at"]
+TODO_HEADERS = TODO_HEADERS_V3 + [
+    "merged_into_id",
+    "merge_id",
+    "merged_from_status",
+    "merged_at",
+]
 META_HEADERS = ["key", "value"]
 ACTIVITY_HEADERS = [
     "event_id",
@@ -33,6 +38,15 @@ ACTIVITY_HEADERS = [
     "database_version",
     "changed_at",
     "snapshot_json",
+]
+MERGE_LOG_HEADERS = [
+    "merge_id",
+    "target_id",
+    "target_before_json",
+    "source_ids_json",
+    "post_versions_json",
+    "created_at",
+    "undone_at",
 ]
 STATUSES = ["inbox", "planned", "in_progress", "blocked", "done", "removed"]
 PRIORITIES = ["P1", "P2", "P3", "P4"]
@@ -77,6 +91,9 @@ class GoogleStore:
             "create": self.create_task,
             "update": self.update_task,
             "remove": self.remove_task,
+            "merge": self.merge_tasks,
+            "undoMerge": self.undo_merge,
+            "bulkUpdateStatus": self.bulk_update_status,
         }
         handler = handlers.get(action)
         if not handler:
@@ -100,6 +117,7 @@ class GoogleStore:
                 "todos": TODO_HEADERS,
                 "meta": META_HEADERS,
                 "activity_log": ACTIVITY_HEADERS,
+                "merge_log": MERGE_LOG_HEADERS,
             }
             requests = [
                 {"addSheet": {"properties": {"title": name}}}
@@ -116,16 +134,19 @@ class GoogleStore:
                     self._update_values(name, 1, headers)
                 else:
                     actual_headers = [str(value) for value in rows[0]]
-                    if name == "todos" and actual_headers == LEGACY_TODO_HEADERS:
+                    if name == "todos" and tuple(actual_headers) in {
+                        tuple(TODO_HEADERS_V2),
+                        tuple(TODO_HEADERS_V3),
+                    }:
                         self._update_values("todos", 1, TODO_HEADERS)
                     elif actual_headers != headers:
                         raise StoreError(f"Unexpected schema in sheet: {name}")
 
             meta = self._read_meta()
             if "schema_version" not in meta:
-                self._append("meta", ["schema_version", 3])
+                self._append("meta", ["schema_version", 4])
             else:
-                self._set_meta("schema_version", 3)
+                self._set_meta("schema_version", 4)
             if "database_version" not in meta:
                 self._append("meta", ["database_version", 0])
             if "last_updated_at" not in meta:
@@ -133,7 +154,7 @@ class GoogleStore:
             return {
                 "spreadsheetId": self.spreadsheet_id,
                 "spreadsheetUrl": f"https://docs.google.com/spreadsheets/d/{self.spreadsheet_id}",
-                "schemaVersion": 3,
+                "schemaVersion": 4,
                 "databaseVersion": int(self._read_meta().get("database_version", 0)),
             }
 
@@ -162,9 +183,9 @@ class GoogleStore:
         next_offset = offset + len(page)
         return {
             "items": [self._task_for_client(task) for task in page],
-            "nextCursor": _encode_cursor(next_offset)
-            if next_offset < len(filtered)
-            else None,
+            "nextCursor": (
+                _encode_cursor(next_offset) if next_offset < len(filtered) else None
+            ),
             "databaseVersion": self.get_meta()["databaseVersion"],
         }
 
@@ -194,9 +215,9 @@ class GoogleStore:
             "overdue": sum(_is_overdue(task, now) for task in active),
             "inProgress": sum(task["status"] == "in_progress" for task in tasks),
             "doneThisWeek": done_this_week,
-            "completionPercent": round(done_this_week / denominator * 100)
-            if denominator
-            else 0,
+            "completionPercent": (
+                round(done_this_week / denominator * 100) if denominator else 0
+            ),
             "today": today_text,
             "weekStartsAt": monday.isoformat(),
         }
@@ -213,15 +234,19 @@ class GoogleStore:
                 "details": str(data.get("details") or "").strip(),
                 "status": status,
                 "priority": _normalize_priority(data.get("priority") or "P3"),
-                "due_date": due_at[:10]
-                if due_at
-                else _normalize_date(data.get("dueDate")),
+                "due_date": (
+                    due_at[:10] if due_at else _normalize_date(data.get("dueDate"))
+                ),
                 "tags_json": json.dumps(_normalize_tags(data.get("tags"))),
                 "created_at": now,
                 "updated_at": now,
                 "completed_at": now if status == "done" else "",
                 "version": 1,
                 "due_at": due_at,
+                "merged_into_id": "",
+                "merge_id": "",
+                "merged_from_status": "",
+                "merged_at": "",
             }
             self._append("todos", [task[header] for header in TODO_HEADERS])
             database_version = self._bump_database_version(now)
@@ -293,6 +318,239 @@ class GoogleStore:
                 "databaseVersion": database_version,
             }
 
+    def merge_tasks(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            source_specs = data.get("sources")
+            if not isinstance(source_specs, list) or not 1 <= len(source_specs) <= 20:
+                raise StoreError("Merge requires between 1 and 20 source tasks.")
+
+            target_id = str(data.get("targetId") or "").strip()
+            source_ids = [str(spec.get("id") or "").strip() for spec in source_specs]
+            if not target_id or any(not source_id for source_id in source_ids):
+                raise StoreError("Target and source task ids are required.")
+            if target_id in source_ids or len(set(source_ids)) != len(source_ids):
+                raise StoreError("Merge target and sources must be unique.")
+
+            records = self._task_record_map()
+            if target_id not in records or any(
+                source_id not in records for source_id in source_ids
+            ):
+                raise StoreError("One or more merge tasks were not found.")
+            target_row, current_target = records[target_id]
+            _assert_version(current_target, data.get("targetVersion"))
+            if current_target["status"] == "removed":
+                raise StoreError("A removed task cannot be a merge target.")
+
+            sources = []
+            for spec, source_id in zip(source_specs, source_ids):
+                row_number, source = records[source_id]
+                _assert_version(source, spec.get("version"))
+                if source["status"] == "removed":
+                    raise StoreError("Removed tasks cannot be merged again.")
+                sources.append((row_number, source))
+
+            now = _now_iso()
+            merge_id = str(uuid.uuid4())
+            target_before = dict(current_target)
+            target = dict(current_target)
+            merged_priority = min(
+                [target] + [source for _, source in sources],
+                key=lambda task: PRIORITIES.index(task["priority"]),
+            )["priority"]
+            merged_due_date, merged_due_at = _earliest_due(
+                [target] + [source for _, source in sources]
+            )
+            merged_tags = _merged_tags([target] + [source for _, source in sources])
+            target.update(
+                details=_merged_details(target, [source for _, source in sources], now),
+                priority=merged_priority,
+                due_date=merged_due_date,
+                due_at=merged_due_at,
+                tags_json=json.dumps(merged_tags),
+                updated_at=now,
+                version=int(target["version"]) + 1,
+            )
+
+            updates = [
+                ("todos", target_row, [target[header] for header in TODO_HEADERS])
+            ]
+            post_versions = {target_id: target["version"]}
+            removed_ids = []
+            for row_number, source in sources:
+                merged_source = dict(source)
+                merged_source.update(
+                    status="removed",
+                    completed_at="",
+                    updated_at=now,
+                    version=int(source["version"]) + 1,
+                    merged_into_id=target_id,
+                    merge_id=merge_id,
+                    merged_from_status=source["status"],
+                    merged_at=now,
+                )
+                updates.append(
+                    (
+                        "todos",
+                        row_number,
+                        [merged_source[header] for header in TODO_HEADERS],
+                    )
+                )
+                post_versions[source["id"]] = merged_source["version"]
+                removed_ids.append(source["id"])
+
+            merge_log_row = len(self._values("merge_log")) + 1
+            log_values = [
+                merge_id,
+                target_id,
+                json.dumps(target_before, separators=(",", ":")),
+                json.dumps(source_ids),
+                json.dumps(post_versions),
+                now,
+                "",
+            ]
+            updates.append(("merge_log", merge_log_row, log_values))
+            database_version = self._batch_write(updates, now)
+            return {
+                "item": self._task_for_client(target),
+                "removedIds": removed_ids,
+                "mergeId": merge_id,
+                "databaseVersion": database_version,
+                "undoUntil": (datetime.now(timezone.utc) + timedelta(seconds=15))
+                .isoformat()
+                .replace("+00:00", "Z"),
+            }
+
+    def undo_merge(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            merge_id = str(data.get("mergeId") or "").strip()
+            if not merge_id:
+                raise StoreError("Merge id is required.")
+            log_row, merge_log = self._find_merge_log(merge_id)
+            if merge_log.get("undone_at"):
+                raise StoreError("This merge was already undone.")
+
+            try:
+                target_before = json.loads(str(merge_log["target_before_json"]))
+                source_ids = json.loads(str(merge_log["source_ids_json"]))
+                post_versions = json.loads(str(merge_log["post_versions_json"]))
+            except (TypeError, ValueError) as error:
+                raise StoreError("Merge history is invalid.") from error
+
+            target_id = str(merge_log["target_id"])
+            task_ids = [target_id] + [str(source_id) for source_id in source_ids]
+            records = self._task_record_map()
+            if any(task_id not in records for task_id in task_ids):
+                raise StoreError("A merged task no longer exists.")
+            for task_id in task_ids:
+                _, task = records[task_id]
+                if int(task["version"]) != int(post_versions.get(task_id, -1)):
+                    raise StoreError(
+                        "VERSION_CONFLICT: A merged task changed after the merge."
+                    )
+
+            now = _now_iso()
+            target_row, current_target = records[target_id]
+            restored_target = {
+                header: target_before.get(header, "") for header in TODO_HEADERS
+            }
+            restored_target.update(
+                updated_at=now,
+                version=int(current_target["version"]) + 1,
+            )
+            updates = [
+                (
+                    "todos",
+                    target_row,
+                    [restored_target[header] for header in TODO_HEADERS],
+                )
+            ]
+            restored_items = [self._task_for_client(restored_target)]
+
+            for source_id in source_ids:
+                row_number, current_source = records[str(source_id)]
+                if current_source.get("merge_id") != merge_id:
+                    raise StoreError("A source task is no longer part of this merge.")
+                restored_source = dict(current_source)
+                restored_source.update(
+                    status=current_source.get("merged_from_status") or "inbox",
+                    updated_at=now,
+                    version=int(current_source["version"]) + 1,
+                    merged_into_id="",
+                    merge_id="",
+                    merged_from_status="",
+                    merged_at="",
+                )
+                updates.append(
+                    (
+                        "todos",
+                        row_number,
+                        [restored_source[header] for header in TODO_HEADERS],
+                    )
+                )
+                restored_items.append(self._task_for_client(restored_source))
+
+            merge_log["undone_at"] = now
+            updates.append(
+                (
+                    "merge_log",
+                    log_row,
+                    [merge_log.get(header, "") for header in MERGE_LOG_HEADERS],
+                )
+            )
+            database_version = self._batch_write(updates, now)
+            return {
+                "items": restored_items,
+                "mergeId": merge_id,
+                "databaseVersion": database_version,
+            }
+
+    def bulk_update_status(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            specs = data.get("tasks")
+            if not isinstance(specs, list) or not 1 <= len(specs) <= 20:
+                raise StoreError("Bulk move requires between 1 and 20 tasks.")
+            status = _normalize_status(data.get("status"))
+            if status == "removed":
+                raise StoreError("Use the remove action to remove tasks.")
+
+            task_ids = [str(spec.get("id") or "").strip() for spec in specs]
+            if any(not task_id for task_id in task_ids) or len(set(task_ids)) != len(
+                task_ids
+            ):
+                raise StoreError("Bulk move task ids must be present and unique.")
+            records = self._task_record_map()
+            if any(task_id not in records for task_id in task_ids):
+                raise StoreError("One or more bulk move tasks were not found.")
+
+            now = _now_iso()
+            updates = []
+            items = []
+            for spec, task_id in zip(specs, task_ids):
+                row_number, current = records[task_id]
+                _assert_version(current, spec.get("version"))
+                if current["status"] == "removed":
+                    raise StoreError("Removed tasks cannot be moved.")
+                task = dict(current)
+                if task["status"] != status:
+                    task.update(
+                        status=status,
+                        updated_at=now,
+                        completed_at=(
+                            task.get("completed_at") or now if status == "done" else ""
+                        ),
+                        version=int(task["version"]) + 1,
+                    )
+                    updates.append(
+                        ("todos", row_number, [task[header] for header in TODO_HEADERS])
+                    )
+                items.append(self._task_for_client(task))
+
+            if updates:
+                database_version = self._batch_write(updates, now)
+            else:
+                database_version = self.get_meta()["databaseVersion"]
+            return {"items": items, "databaseVersion": database_version}
+
     def _read_tasks(self) -> list[dict[str, Any]]:
         tasks = self._read_objects("todos", TODO_HEADERS)
         for task in tasks:
@@ -301,6 +559,10 @@ class GoogleStore:
             task["priority"] = str(task.get("priority") or "P3")
             task["due_date"] = str(task.get("due_date") or "")[:10]
             task["due_at"] = str(task.get("due_at") or "")
+            task["merged_into_id"] = str(task.get("merged_into_id") or "")
+            task["merge_id"] = str(task.get("merge_id") or "")
+            task["merged_from_status"] = str(task.get("merged_from_status") or "")
+            task["merged_at"] = str(task.get("merged_at") or "")
             task["version"] = _int(task.get("version"), 1)
         return tasks
 
@@ -312,6 +574,20 @@ class GoogleStore:
             if task["id"] == task_id:
                 return index, task
         raise StoreError("Task not found.")
+
+    def _task_record_map(self) -> dict[str, tuple[int, dict[str, Any]]]:
+        return {
+            task["id"]: (row_number, task)
+            for row_number, task in enumerate(self._read_tasks(), start=2)
+        }
+
+    def _find_merge_log(self, merge_id: str) -> tuple[int, dict[str, Any]]:
+        for row_number, record in enumerate(
+            self._read_objects("merge_log", MERGE_LOG_HEADERS), start=2
+        ):
+            if str(record.get("merge_id")) == merge_id:
+                return row_number, record
+        raise StoreError("Merge history was not found.")
 
     def _task_for_client(self, task: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -366,6 +642,46 @@ class GoogleStore:
             body={"values": [values]},
         ).execute()
 
+    def _batch_write(
+        self, updates: list[tuple[str, int, list[Any]]], updated_at: str
+    ) -> int:
+        meta_rows = self._values("meta")
+        meta_indexes = {
+            str(row[0]): row_number
+            for row_number, row in enumerate(meta_rows[1:], start=2)
+            if row
+        }
+        if (
+            "database_version" not in meta_indexes
+            or "last_updated_at" not in meta_indexes
+        ):
+            raise StoreError("Meta sheet is incomplete. Run setup first.")
+        meta = {str(row[0]): row[1] for row in meta_rows[1:] if len(row) >= 2}
+        database_version = int(meta.get("database_version", 0)) + 1
+        all_updates = updates + [
+            (
+                "meta",
+                meta_indexes["database_version"],
+                ["database_version", database_version],
+            ),
+            (
+                "meta",
+                meta_indexes["last_updated_at"],
+                ["last_updated_at", updated_at],
+            ),
+        ]
+        self.sheets.spreadsheets().values().batchUpdate(
+            spreadsheetId=self.spreadsheet_id,
+            body={
+                "valueInputOption": "RAW",
+                "data": [
+                    {"range": f"'{sheet}'!A{row}", "values": [values]}
+                    for sheet, row, values in all_updates
+                ],
+            },
+        ).execute()
+        return database_version
+
     def _read_meta(self) -> dict[str, Any]:
         return {
             str(row[0]): row[1] for row in self._values("meta")[1:] if len(row) >= 2
@@ -409,8 +725,13 @@ class GoogleStore:
 
 def _validate_task_input(data: dict[str, Any], partial: bool) -> None:
     if not partial or "title" in data:
-        if not str(data.get("title") or "").strip():
+        title = str(data.get("title") or "").strip()
+        if not title:
             raise StoreError("Title is required.")
+        if len(title) > 200:
+            raise StoreError("Title must be 200 characters or fewer.")
+    if "details" in data and len(str(data.get("details") or "")) > 20000:
+        raise StoreError("Details must be 20,000 characters or fewer.")
     if "status" in data:
         _normalize_status(data["status"])
     if "priority" in data:
@@ -421,6 +742,69 @@ def _validate_task_input(data: dict[str, Any], partial: bool) -> None:
         _normalize_due_at(data["dueAt"])
     if "tags" in data:
         _normalize_tags(data["tags"])
+
+
+def _task_tags(task: dict[str, Any]) -> list[str]:
+    try:
+        return _normalize_tags(json.loads(str(task.get("tags_json") or "[]")))
+    except (TypeError, ValueError):
+        return []
+
+
+def _merged_tags(tasks: list[dict[str, Any]]) -> list[str]:
+    result = []
+    for task in tasks:
+        for tag in _task_tags(task):
+            if tag not in result and len(result) < 8:
+                result.append(tag)
+    return result
+
+
+def _earliest_due(tasks: list[dict[str, Any]]) -> tuple[str, str]:
+    candidates = []
+    for task in tasks:
+        due_at = str(task.get("due_at") or "")
+        due_date = str(task.get("due_date") or "")[:10]
+        try:
+            if due_at:
+                candidates.append(
+                    (_parse_due_at(due_at), due_date or due_at[:10], due_at)
+                )
+            elif due_date:
+                candidates.append(
+                    (
+                        datetime.fromisoformat(f"{due_date}T23:59:00+07:00"),
+                        due_date,
+                        "",
+                    )
+                )
+        except ValueError:
+            continue
+    if not candidates:
+        return "", ""
+    _, due_date, due_at = min(candidates, key=lambda candidate: candidate[0])
+    return due_date, due_at
+
+
+def _merged_details(
+    target: dict[str, Any], sources: list[dict[str, Any]], merged_at: str
+) -> str:
+    date_label = _parse_due_at(merged_at).astimezone(BANGKOK).strftime("%d %b %Y %H:%M")
+    lines = [f"— Merged {len(sources)} ticket(s) · {date_label} BKK —"]
+    for source in sources:
+        title = " ".join(str(source.get("title") or "Untitled").split())[:200]
+        details = str(source.get("details") or "").strip()
+        summary = " ".join(details.split())[:500]
+        line = f"• [{source.get('priority') or 'P3'}] {title}"
+        if summary:
+            line += f" — {summary}"
+        lines.append(line)
+    existing = str(target.get("details") or "").rstrip()
+    combined = "\n\n".join(part for part in [existing, "\n".join(lines)] if part)
+    if len(combined) <= 20000:
+        return combined
+    suffix = "\n… Additional merged content remains in the removed source tickets."
+    return combined[: 20000 - len(suffix)].rstrip() + suffix
 
 
 def _normalize_status(value: Any) -> str:
@@ -493,9 +877,7 @@ def _focus_sort_key(task: dict[str, Any]) -> tuple[Any, ...]:
     score = (
         0
         if _is_overdue(task, now)
-        else 1
-        if task["status"] != "done" and task.get("due_date") == today
-        else 2
+        else 1 if task["status"] != "done" and task.get("due_date") == today else 2
     )
     return (
         score,

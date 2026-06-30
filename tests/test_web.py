@@ -90,6 +90,16 @@ class WebTests(unittest.TestCase):
         removed_job = self.client.get(f"/api/jobs/{removed.json()['data']['jobId']}")
         self.assertEqual(removed_job.json()["data"]["status"], "succeeded")
 
+        for action in ("merge", "undoMerge", "bulkUpdateStatus"):
+            queued_write = self.client.post(
+                "/api", json={"action": action, "payload": {"test": True}}
+            )
+            self.assertEqual(queued_write.status_code, 202)
+            queued_job = self.client.get(
+                f"/api/jobs/{queued_write.json()['data']['jobId']}"
+            )
+            self.assertEqual(queued_job.json()["data"]["status"], "succeeded")
+
         failed = self.client.post(
             "/api", json={"action": "update", "payload": {"id": "task"}}
         )

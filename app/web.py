@@ -152,6 +152,12 @@ def create_app(settings: Settings | None = None, store: Any | None = None) -> Fa
     async def ping() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon():
+        return FileResponse(
+            ROOT / "app" / "static" / "favicon.svg", media_type="image/svg+xml"
+        )
+
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request):
         if _authenticated(request, settings):

@@ -39,6 +39,11 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
+    def test_favicon_is_public(self):
+        response = self.client.get("/favicon.svg")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "image/svg+xml")
+
     def test_dashboard_requires_login(self):
         response = self.client.get("/", follow_redirects=False)
         self.assertEqual(response.status_code, 303)

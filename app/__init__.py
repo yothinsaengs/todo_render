@@ -1,0 +1,1 @@
+"""FastAPI Focus Board application."""

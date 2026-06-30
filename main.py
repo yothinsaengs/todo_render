@@ -1,19 +1,10 @@
 import os
 
 import uvicorn
-from fastapi import FastAPI
 
-app = FastAPI(title="Hello World Service")
+from app.web import create_app
 
-
-@app.get("/")
-async def hello_world() -> dict[str, str]:
-    return {"message": "Hello World"}
-
-
-@app.get("/ping")
-async def ping() -> dict[str, str]:
-    return {"status": "ok"}
+app = create_app()
 
 
 if __name__ == "__main__":
@@ -21,4 +12,5 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8000")),
+        proxy_headers=True,
     )

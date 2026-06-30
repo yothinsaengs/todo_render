@@ -4,3 +4,5 @@
 __pycache__
 *.py[cod]
 .env
+secrets
+google-service-account.json

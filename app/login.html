@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Focus Board</title>
+  <style>
+    :root { color-scheme:light; --ink:#20213d; --muted:#74758f; --purple:#6d4aff; --line:#e7e5f4; }
+    * { box-sizing:border-box; }
+    body { display:grid; min-height:100vh; margin:0; place-items:center; padding:20px; background:radial-gradient(circle at 10% 0%,#ece8ff,transparent 35rem),#f7f7ff; color:var(--ink); font:14px/1.45 Inter,system-ui,sans-serif; }
+    main { width:min(400px,100%); padding:30px; border:1px solid var(--line); border-radius:20px; background:white; box-shadow:0 20px 55px rgba(54,42,116,.12); }
+    .mark { display:grid; width:46px; height:46px; margin-bottom:18px; place-items:center; border-radius:15px; background:linear-gradient(135deg,var(--purple),#3b82f6); color:white; font-size:22px; }
+    h1 { margin:0; font-size:28px; letter-spacing:-.04em; }
+    p { margin:6px 0 22px; color:var(--muted); }
+    label { display:grid; gap:6px; margin-top:14px; font-size:12px; font-weight:750; }
+    input { width:100%; padding:12px; border:1px solid var(--line); border-radius:11px; font:inherit; }
+    input:focus { outline:3px solid rgba(109,74,255,.18); border-color:var(--purple); }
+    button { width:100%; margin-top:20px; padding:12px; border:0; border-radius:11px; background:linear-gradient(135deg,var(--purple),#5968ec); color:white; font:inherit; font-weight:800; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:wait; }
+    #error { min-height:20px; margin:12px 0 0; color:#b5314b; font-size:12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">✓</div>
+    <h1>Focus Board</h1>
+    <p>Sign in to access your tasks.</p>
+    <form id="login-form">
+      <label>Username<input id="username" autocomplete="username" required autofocus></label>
+      <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+      <button id="submit" type="submit">Sign in</button>
+      <div id="error" role="alert"></div>
+    </form>
+  </main>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const button=document.getElementById('submit'),error=document.getElementById('error');
+      button.disabled=true;error.textContent='';
+      try {
+        const response=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('username').value,password:document.getElementById('password').value})});
+        const result=await response.json();
+        if(!response.ok)throw new Error(result.error||'Sign in failed.');
+        location.replace('/');
+      } catch (failure) { error.textContent=failure.message;button.disabled=false; }
+    });
+  </script>
+</body>
+</html>

@@ -2,3 +2,5 @@ __pycache__/
 *.py[cod]
 .venv/
 .env
+secrets/
+google-service-account.json

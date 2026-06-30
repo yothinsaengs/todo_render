@@ -1,6 +1,7 @@
 const SERVICE_URL = 'https://todo-render-rxto.onrender.com/ping';
 const PING_HANDLER = 'pingWebService';
 const PING_INTERVAL_MS = 14 * 60 * 1000;
+const DISCORD_WEBHOOK_PROPERTY = 'DISCORD_WEBHOOK_URL';
 
 /** Pings the Render service and schedules the next invocation. */
 function pingWebService() {
@@ -22,6 +23,14 @@ function pingWebService() {
     if (statusCode < 200 || statusCode >= 300) {
       throw new Error(`Ping failed with HTTP ${statusCode}`);
     }
+  } catch (error) {
+    try {
+      sendDiscordNotification_(error);
+    } catch (notificationError) {
+      console.error(`Discord notification failed: ${notificationError.message}`);
+    }
+
+    throw error;
   } finally {
     replacePingTrigger_();
     lock.releaseLock();
@@ -36,6 +45,38 @@ function setupPingTrigger() {
 /** Run manually to stop future pings. */
 function stopPingTrigger() {
   deletePingTriggers_();
+}
+
+/** Run manually to verify the configured Discord webhook. */
+function testDiscordNotification() {
+  sendDiscordNotification_(new Error('Manual notification test'));
+}
+
+function sendDiscordNotification_(error) {
+  const webhookUrl = PropertiesService.getScriptProperties()
+    .getProperty(DISCORD_WEBHOOK_PROPERTY);
+
+  if (!webhookUrl) {
+    throw new Error(`Missing script property: ${DISCORD_WEBHOOK_PROPERTY}`);
+  }
+
+  const errorMessage = String(error && error.message ? error.message : error)
+    .slice(0, 1500);
+  const content = [
+    '🚨 Render service ping failed',
+    `URL: ${SERVICE_URL}`,
+    `Time: ${new Date().toISOString()}`,
+    `Error: ${errorMessage}`,
+  ].join('\n');
+
+  UrlFetchApp.fetch(webhookUrl, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({
+      content,
+      allowed_mentions: {parse: []},
+    }),
+  });
 }
 
 function replacePingTrigger_() {
